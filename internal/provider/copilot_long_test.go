@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -155,6 +156,48 @@ func TestCopilotListPriceIsCopilots(t *testing.T) {
 	pr, ok := Provider{ID: "copilot"}.ListPrice("gpt-6-luna")
 	if !ok || !samePrice(pr, *luna.Price) {
 		t.Errorf("ListPrice %+v %v; want Copilot's %+v", pr, ok, *luna.Price)
+	}
+}
+
+// Copilot's /models says nothing of whether a model takes temperature, and
+// its Responses API turns the whole request away when one is sent: "Unsupported
+// parameter: 'temperature' is not supported with this model" (#6388, Suaig). A
+// model models.dev lists under github-copilot inherits its word, so the gateway
+// leaves temperature and top_p out; one it doesn't list keeps none, as before.
+func TestCopilotModelsTakeTemperatureFromCatalog(t *testing.T) {
+	signIn(t) // gives the test its own home, XDG_CACHE_HOME included
+	if err := os.MkdirAll(filepath.Dir(catalog.CachePath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{
+	  "github-copilot": {
+	    "id": "github-copilot",
+	    "name": "GitHub Copilot",
+	    "models": {
+	      "gpt-6-luna": {"id": "gpt-6-luna", "name": "GPT-6 Luna", "temperature": false,
+	                     "modalities": {"input": ["text"], "output": ["text"]}},
+	      "grok-4.7":   {"id": "grok-4.7", "name": "Grok 4.7", "temperature": true,
+	                     "modalities": {"input": ["text"], "output": ["text"]}}
+	    }
+	  }
+	}`
+	if err := os.WriteFile(catalog.CachePath(), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	catalog.Reset()
+	t.Cleanup(catalog.Reset)
+
+	api, _ := copilotVersionedAPI(t)
+	got := copilotTestModels(t, copilotTestSession(api.URL, false))
+	luna, ok := got["gpt-6-luna"]
+	if !ok || luna.Temperature == nil || *luna.Temperature {
+		t.Errorf("gpt-6-luna temperature %v; models.dev says false", luna.Temperature)
+	}
+	if g, ok := got["grok-4.7"]; !ok || g.Temperature == nil || !*g.Temperature {
+		t.Errorf("grok-4.7 temperature %v; models.dev says true", g.Temperature)
+	}
+	if m, ok := got["gpt-4.1"]; !ok || m.Temperature != nil {
+		t.Errorf("gpt-4.1 temperature %v; models.dev says nothing of it", m.Temperature)
 	}
 }
 

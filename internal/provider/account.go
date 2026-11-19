@@ -1937,7 +1937,13 @@ func copilotModels(ctx context.Context, app copilotApp) ([]catalog.Model, error)
 			// the prompt this account's Copilot takes for the model (936K
 			// for gemini-4-carbon), not models.dev's window for the id
 			// (1048576): over it Copilot answers 400 (codealc on X)
-			Context: catalog.Window(m.Capabilities.Limits.Prompt)}
+			Context: catalog.Window(m.Capabilities.Limits.Prompt),
+			// whether the model takes temperature at all: Copilot's list
+			// says nothing of it, and its Responses API refuses the whole
+			// request with one ("Unsupported parameter: 'temperature' is
+			// not supported with this model"), so models.dev's word for
+			// the id decides (#6388)
+			Temperature: copilotTemperature(m.ID)}
 		if m.Billing != nil {
 			m.Billing.Prices.apply(&mm)
 		}
@@ -1953,6 +1959,18 @@ func copilotModels(ctx context.Context, app copilotApp) ([]catalog.Model, error)
 	copilotPicks[app.Token] = picks
 	copilotTermsMu.Unlock()
 	return out, nil
+}
+
+// copilotTemperature is models.dev's word on whether Copilot's model takes
+// temperature and top_p: nil when it says nothing of the id, so a model
+// it doesn't know is left as Copilot listed it (#6388).
+func copilotTemperature(model string) *bool {
+	for _, m := range catalog.ProviderShared("github-copilot") {
+		if m.ID == model {
+			return m.Temperature
+		}
+	}
+	return nil
 }
 
 // forgetClaudeStatus drops what `claude auth status` said; tests use it.
